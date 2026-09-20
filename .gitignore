@@ -1,0 +1,11 @@
+data/
+*.pt
+*.pth
+checkpoints/
+CLAUDE.local.md
+notes/
+drafts/
+.env
+__pycache__/
+.ipynb_checkpoints/
+*.zip
