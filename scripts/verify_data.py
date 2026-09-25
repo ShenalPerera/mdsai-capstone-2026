@@ -173,20 +173,32 @@ def collect_records_per_split(json_files, csv_files):
     return per_split
 
 
-def count_images(data_dir):
+def list_image_filenames(data_dir, split):
+    """Return the set of on-disk image filenames (basenames) for a split."""
     images_dir = data_dir / "images"
     search_root = images_dir if images_dir.is_dir() else data_dir
-    counts = {}
-    for split in SPLITS:
-        counts[split] = len(list(search_root.rglob(f"*{split}*.jpg"))) + len(
-            list(search_root.rglob(f"*{split}*.JPG"))
-        )
-    return counts
+    names = {p.name for p in search_root.rglob(f"*{split}*.jpg")}
+    names |= {p.name for p in search_root.rglob(f"*{split}*.JPG")}
+    return names
 
 
-def analyse_split(split, records):
+def analyse_split(split, records, image_files):
     log(f"\n### Split: {split}")
     log(f"- records: {len(records)}")
+    log(f"- image files on disk: {len(image_files)}")
+
+    annotated_names = {get_image_name(r) for r in records if get_image_name(r)}
+    if image_files:
+        extra_files = sorted(image_files - annotated_names)
+        missing_files = sorted(annotated_names - image_files)
+        log(
+            f"- image files with no matching annotation record: {len(extra_files)}"
+            + (f" (e.g. {extra_files[:5]})" if extra_files else "")
+        )
+        log(
+            f"- annotated records with no matching image file: {len(missing_files)}"
+            + (f" (e.g. {missing_files[:5]})" if missing_files else "")
+        )
 
     if not records:
         log("- flaw labels present: N/A (no records found)")
@@ -255,11 +267,18 @@ def main():
     log(f"\nDATA_DIR: `{data_dir}`")
 
     log("\n## Image file counts")
-    image_counts = count_images(data_dir)
-    log("\n| split | actual | expected |")
-    log("|-------|--------|----------|")
+    log(
+        "\nNote: files on disk can exceed the annotated count - the raw VizWiz "
+        "image pool is shared across tasks and is not limited to images "
+        "annotated for quality issues. See the per-split cross-check below for "
+        "the number that actually matters (annotated records with no file, and "
+        "vice versa)."
+    )
+    image_files_by_split = {split: list_image_filenames(data_dir, split) for split in SPLITS}
+    log("\n| split | files on disk | expected (paper) |")
+    log("|-------|----------------|-------------------|")
     for split in SPLITS:
-        log(f"| {split} | {image_counts[split]} | {EXPECTED_IMAGE_COUNTS[split]} |")
+        log(f"| {split} | {len(image_files_by_split[split])} | {EXPECTED_IMAGE_COUNTS[split]} |")
 
     log("\n## Discovered annotation files")
     json_files, csv_files = discover_annotation_files(data_dir)
@@ -274,7 +293,7 @@ def main():
 
     log("\n## Per-split analysis")
     for split in SPLITS:
-        analyse_split(split, per_split[split])
+        analyse_split(split, per_split[split], image_files_by_split[split])
 
     reports_dir = Path("reports")
     reports_dir.mkdir(parents=True, exist_ok=True)
