@@ -1,14 +1,16 @@
 # mdsai-capstone-2026
 
-## VizWiz Image Quality Assessment
+## Actionable Image Quality Assessment for Assistive Photography
+
+*A comparative study of classical, deep, and hybrid approaches*
 
 Capstone project for Master in Data Science and AI, UoM. Predicts whether a
-photo taken by a blind user is usable, and if not, which quality flaw
-(blur, framing, dark/bright exposure, obstruction, rotation) is responsible,
-so a downstream recognition system can request a corrective retake instead
-of returning a wrong answer. Three approaches are trained and compared per
-flaw: a classical (non-deep-learning) feature baseline, a fine-tuned CNN,
-and a hybrid of the two.
+photo taken by a blind and low-vision (BLV) user is usable, and if not,
+which quality flaw (blur, framing, dark/bright exposure, obstruction,
+rotation) is responsible, so a downstream recognition system can request a
+corrective retake instead of returning a wrong answer. Three approaches are
+trained and compared per flaw: a classical (non-deep-learning) feature
+baseline, a fine-tuned CNN, and a hybrid of the two.
 
 ## Dataset
 
