@@ -13,12 +13,14 @@ Usage: python scripts/validate_reconstruction.py DATA_DIR
 """
 import csv
 import json
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 FLAW_CODES = ["BLR", "BRT", "DRK", "FRM", "NON", "OBS", "OTH", "ROT"]
 CHECK_SPLITS = ["train", "val"]
+IMAGE_ID_RE = re.compile(r"(\d+)(?=\.\w+$)")
 
 report_lines = []
 
@@ -28,6 +30,19 @@ def log(line=""):
     report_lines.append(line)
 
 
+def canonical_id(image_name):
+    """The raw CSV zero-pads image IDs to 12 digits (e.g. 000000020000)
+    while the published JSON / on-disk filenames use 8 digits (00022585) -
+    same photo, different string. Join on the numeric ID instead of the
+    literal filename so these actually match."""
+    if not image_name:
+        return None
+    match = IMAGE_ID_RE.search(image_name)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
 def load_published(data_dir, split):
     path = data_dir / "annotations" / f"{split}.json"
     with open(path, "r", encoding="utf-8") as f:
@@ -35,7 +50,11 @@ def load_published(data_dir, split):
     published = {}
     for rec in records:
         flaws = rec.get("flaws", {})
-        published[rec["image"]] = {code: int(flaws.get(code, 0)) for code in FLAW_CODES}
+        image_id = canonical_id(rec["image"])
+        published[image_id] = {
+            "image": rec["image"],
+            "flaws": {code: int(flaws.get(code, 0)) for code in FLAW_CODES},
+        }
     return published
 
 
@@ -59,7 +78,7 @@ def load_csv_rows(path):
 
 
 def reconstruct(rows, split, exclude_rejected):
-    """Group raw per-worker rows by image and sum each flaw column."""
+    """Group raw per-worker rows by image ID and sum each flaw column."""
     totals = defaultdict(lambda: {code: 0 for code in FLAW_CODES})
     split_upper = split.upper()
     for row in rows:
@@ -68,29 +87,30 @@ def reconstruct(rows, split, exclude_rejected):
             continue
         if exclude_rejected and str(row.get("REJECT", "0")).strip() == "1":
             continue
-        image = row.get("IMG")
-        if not image:
+        image_id = canonical_id(row.get("IMG"))
+        if image_id is None:
             continue
         for code in FLAW_CODES:
             value = row.get(code)
             if value not in (None, ""):
-                totals[image][code] += int(value)
+                totals[image_id][code] += int(value)
     return totals
 
 
 def compare(published, reconstructed):
     exact = 0
     mismatches = []
-    for image, pub in published.items():
-        rec = reconstructed.get(image)
+    for image_id, pub in published.items():
+        pub_flaws = pub["flaws"]
+        rec = reconstructed.get(image_id)
         if rec is None:
-            mismatches.append((image, "ALL", pub, "no CSV rows found"))
+            mismatches.append((pub["image"], "ALL", pub_flaws, "no CSV rows found"))
             continue
-        if pub == rec:
+        if pub_flaws == rec:
             exact += 1
         else:
-            diff_codes = [c for c in FLAW_CODES if pub[c] != rec[c]]
-            mismatches.append((image, ",".join(diff_codes), pub, rec))
+            diff_codes = [c for c in FLAW_CODES if pub_flaws[c] != rec[c]]
+            mismatches.append((pub["image"], ",".join(diff_codes), pub_flaws, rec))
     return exact, mismatches
 
 
