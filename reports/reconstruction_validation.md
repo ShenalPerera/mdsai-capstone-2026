@@ -98,16 +98,33 @@ ruled out a remaining padding/format issue:
   - CSV `VAL` ids span 28,000-44,551 (4,271 unique ids) - **zero overlap**
     with val.json's range
 
-**Root cause: the CSV's IMG numbering is a different ID space from
-train.json/val.json/test.json's numbering**, not merely a padding-format
-difference. The most likely explanation is that the CSV uses the original/
-global VizWiz corpus image ID (shared across VizWiz's other tasks), while
-the quality-issues JSON files use a task-local renumbering restarted at 0
-for each split. No crosswalk between the two ID spaces is provided in the
-released files.
+**Root cause (CONFIRMED, not speculative): the CSV is annotation data from
+the deprecated pre-2020 VizWiz dataset release, which used 12-digit
+zero-padded filenames and different split sizes than the current release
+our train.json/val.json/test.json come from.** Per
+https://vizwiz.org/tasks-and-datasets/vqa/: "the deprecated version has 12
+digits for filenames (e.g., VizWiz_val_000000028000.jpg) while the new
+version has 8 digits for filenames (e.g., VizWiz_val_00028000.jpg)", and
+the deprecated version had 20,000 train / 3,173 val image-question pairs
+versus 20,523 / 4,319 in the current version (VQA task numbers, cited as
+evidence of the version split - the two releases are known to differ in
+both filename format and split composition). Different dataset versions
+have different image numbering; no crosswalk between the two is published
+anywhere.
+
+**The 331-365 apparent train "matches" are coincidental collisions between
+two unrelated numbering schemes, not genuine reconstructions, and must NOT
+be salvaged or used.** There is no way to distinguish a real match from a
+coincidental one after the fact, so treating any subset of these as valid
+labels risks silently training on wrong data.
 
 **Consequence:** test-split labels - both the six flaws and
 recognisability - cannot be reliably reconstructed from this CSV. See
 docs/decisions.md (2026-09-25, "SUPERSEDES the row above") for the decision
 this drives: the val-split-in-half fallback (fixed seed 42) is needed for
 ALL heads on the primary evaluation, not recognisability alone.
+
+Further crosswalk recovery (e.g. trying to match deprecated-version images
+to current-version images by content/hash) was not attempted: no mapping is
+published, and the fallback protocol (val split in half) was already the
+primary plan regardless of whether reconstruction succeeded.
