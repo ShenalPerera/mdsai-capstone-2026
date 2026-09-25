@@ -116,3 +116,31 @@ Note: files on disk can exceed the annotated count - the raw VizWiz image pool i
 - flaw labels present: False
 - (skipping label statistics: no flaw votes found for this split)
 
+---
+
+# JSON Integrity Verification
+
+DATA_DIR: `/content/drive/MyDrive/Masters/Sem 3/capstone/data`
+
+### train.json
+- record count: 23431 (expected 23431) - OK
+- annotated images missing from disk: 0
+- records with malformed flaws/unrecognizable shape: 0
+- records with an out-of-range (not int 0-5) vote: 0
+- filename ID range: 0-23430 (23431 unique of 23431 records)
+
+### val.json
+- record count: 7750 (expected 7750) - OK
+- annotated images missing from disk: 0
+- records with malformed flaws/unrecognizable shape: 0
+- records with an out-of-range (not int 0-5) vote: 0
+- filename ID range: 0-7749 (7750 unique of 7750 records)
+
+### test.json
+- record count: 8000 (expected 8000) - OK
+- annotated images missing from disk: 0
+- flaw labels present: False (expected: False - withheld for the challenge)
+- filename ID range: 0-7999 (8000 unique of 8000 records)
+
+### Cross-split leakage check
+- no filename appears in more than one split
