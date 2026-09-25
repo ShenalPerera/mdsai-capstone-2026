@@ -49,7 +49,10 @@ def find_csv(data_dir):
 
 
 def load_csv_rows(path):
-    with open(path, "r", encoding="utf-8", newline="") as f:
+    # utf-8-sig: this CSV ships with a UTF-8 BOM, which would otherwise
+    # attach itself to the first header ("IMG" -> "﻿IMG") and silently
+    # break every row lookup.
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         rows = list(reader)
     return rows

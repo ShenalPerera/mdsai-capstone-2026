@@ -87,7 +87,9 @@ def load_json_records(path):
 
 
 def load_csv_rows(path):
-    with open(path, "r", encoding="utf-8", newline="") as f:
+    # utf-8-sig: strip a possible UTF-8 BOM so it doesn't attach itself to
+    # the first header name (e.g. "IMG" -> "﻿IMG").
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         columns = reader.fieldnames or []
         rows = list(reader)
@@ -133,7 +135,16 @@ def has_any_flaw_label(votes):
 
 def collect_records_per_split(json_files, csv_files):
     """Map each discovered record to a split, using the source filename first
-    and falling back to the image filename (e.g. VizWiz_train_00022585.jpg)."""
+    and falling back to the image filename (e.g. VizWiz_train_00022585.jpg).
+
+    CSV files are schema-inspected (logged) but their rows are NOT folded
+    into per-split records here: VizWiz_quality_issues_train_val_test.csv is
+    raw per-worker votes (one row per worker per image, spanning all three
+    splits in a single file), which needs group-by-image aggregation before
+    it means anything as a "record" - see scripts/validate_reconstruction.py.
+    Naively bucketing it by filename or per-row also previously mis-assigned
+    every row to "train" (the first split name that happens to substring-match
+    the combined filename), inflating train's record count 10x."""
     per_split = {split: [] for split in SPLITS}
     unassigned = []
 
@@ -148,24 +159,7 @@ def collect_records_per_split(json_files, csv_files):
                 unassigned.append(rec)
 
     for path in csv_files:
-        rows = load_csv_rows(path)
-        file_split = infer_split(path.name)
-        # Some datasets carry an explicit split/partition column.
-        split_col = None
-        if rows:
-            for candidate in ("split", "Split", "partition", "dataset", "Dataset"):
-                if candidate in rows[0]:
-                    split_col = candidate
-                    break
-        for row in rows:
-            if split_col and row.get(split_col):
-                split = infer_split(str(row[split_col])) or str(row[split_col]).lower()
-            else:
-                split = file_split or infer_split(get_image_name(row) or "")
-            if split in per_split:
-                per_split[split].append(row)
-            else:
-                unassigned.append(row)
+        load_csv_rows(path)
 
     if unassigned:
         log(f"  WARNING: {len(unassigned)} records could not be assigned to a split")
