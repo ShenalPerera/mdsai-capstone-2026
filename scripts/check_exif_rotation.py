@@ -9,6 +9,7 @@ Reads headers only (PIL opens lazily), so pixels are never decoded.
 Usage: python scripts/check_exif_rotation.py DATA_DIR
 """
 import sys
+import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -30,6 +31,7 @@ ORIENTATION_MEANING = {
 }
 NO_EXIF = "no EXIF"
 NO_TAG = "EXIF, no Orientation tag"
+PROGRESS_INTERVAL_SEC = 0.5
 
 report_lines = []
 
@@ -50,6 +52,19 @@ def orientation_category(path):
     return int(value)
 
 
+def show_progress(done, total, current, start):
+    # Single line rewritten in place (\r) on stderr, so the report on stdout
+    # stays clean and the notebook output isn't flooded with 23k lines.
+    elapsed = time.time() - start
+    rate = done / elapsed if elapsed > 0 else 0.0
+    eta = (total - done) / rate if rate > 0 else 0.0
+    sys.stderr.write(
+        f"\r[{done:>6}/{total}] {done / total * 100:5.1f}% | {total - done:>6} left | "
+        f"{rate:6.1f} img/s | elapsed {elapsed / 60:5.1f} min | ETA {eta / 60:5.1f} min | {current}  "
+    )
+    sys.stderr.flush()
+
+
 def category_label(cat):
     if isinstance(cat, int):
         return f"{cat} ({ORIENTATION_MEANING.get(cat, 'unknown')})"
@@ -68,16 +83,23 @@ def main():
     data_dir = Path(sys.argv[1])
     images_dir = data_dir / "images"
     records = get_splits(data_dir)["train"]
+    total = len(records)
+    print(f"Reading EXIF headers for {total} annotated train images...", file=sys.stderr)
 
     counts = Counter()
     rot_votes = defaultdict(Counter)
-    for record in records:
+    start = last_update = time.time()
+    for done, record in enumerate(records, start=1):
         name = record["image"]
         cat = orientation_category(images_dir / image_subdir(name) / name)
         counts[cat] += 1
         rot_votes[cat][int(record["flaws"]["ROT"])] += 1
 
-    total = len(records)
+        now = time.time()
+        if now - last_update >= PROGRESS_INTERVAL_SEC or done == total:
+            show_progress(done, total, name, start)
+            last_update = now
+    sys.stderr.write("\n\n")
     non_identity = sum(n for cat, n in counts.items() if isinstance(cat, int) and cat != 1)
 
     log("# EXIF Orientation Check (annotated train images)")
