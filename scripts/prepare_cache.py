@@ -5,6 +5,11 @@ ratio with padding (never stretching - framing is itself a target label,
 so distorting geometry would corrupt it), and pack the results into a tar
 archive for fast Colab session startup.
 
+This cache is CNN input only. Classical features must not be computed from
+it: downsampling to 256px suppresses the blur signal, and the black padding
+skews exposure statistics and the border-edge framing feature. Classical
+features read the original images instead (see docs/decisions.md).
+
 Usage: python scripts/prepare_cache.py DATA_DIR [--size 256] [--out PATH]
 """
 import argparse
