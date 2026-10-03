@@ -18,7 +18,7 @@ import sys
 import tarfile
 from pathlib import Path
 
-from PIL import Image, ImageOps
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.data.splits import get_splits, image_subdir  # noqa: E402
@@ -26,7 +26,8 @@ from src.data.splits import get_splits, image_subdir  # noqa: E402
 
 def resize_with_padding(image, size):
     """Resize preserving aspect ratio, then letterbox-pad to a square."""
-    image = ImageOps.exif_transpose(image)
+    # Deliberately no EXIF auto-rotation: ROT labels refer to the image's
+    # raw orientation (see docs/decisions.md, 2026-10-03).
     image.thumbnail((size, size), Image.Resampling.LANCZOS)
     canvas = Image.new("RGB", (size, size), (0, 0, 0))
     offset = ((size - image.width) // 2, (size - image.height) // 2)
