@@ -23,7 +23,7 @@ def df_to_markdown(df, index=True):
     """Minimal DataFrame -> GitHub markdown table (avoids a tabulate
     dependency)."""
     frame = df.reset_index() if index else df
-    header = [str(c) for c in frame.columns]
+    header = [_fmt(c) for c in frame.columns]
     lines = ["| " + " | ".join(header) + " |",
              "|" + "|".join(["---"] * len(header)) + "|"]
     for row in frame.itertuples(index=False):
@@ -34,7 +34,8 @@ def df_to_markdown(df, index=True):
 def _fmt(value):
     if isinstance(value, (float, np.floating)):
         return "nan" if np.isnan(value) else f"{value:g}"
-    return str(value)
+    # a literal | would be read as a column separator (e.g. "ROT % | cue on")
+    return str(value).replace("|", "\\|")
 
 
 def environment_lines():
