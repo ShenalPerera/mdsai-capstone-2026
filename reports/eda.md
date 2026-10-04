@@ -12,7 +12,57 @@ Partitions: train and val only. The test partition is not read during developmen
 ## Findings and impact on the modelling plan
 
 <!-- findings:start -->
-_Findings not yet written._
+1. **Train and val are the same population.** Every label's prevalence at
+   >=2 votes agrees within 1.4 points between partitions (largest gap: BLR
+   40.8% vs 42.2%). No partition-specific adjustment is needed.
+
+2. **Native resolution: classical@512 is kept, with a thin margin.** 9.3% of
+   train+val originals have a long edge below 512px, under the
+   pre-registered 10% limit; 0.3% are below 224px. Median long edge is
+   1296px. Because the margin is small, Stage C reports BLR performance at
+   512 separately for natively-below-512 images (native dimensions are
+   recorded per row) to show whether upsampling distorts the sharpness
+   features. A small tail is near-degenerate (smallest long edge 13px,
+   smallest file 0.8 KB); these keep their labels and stay in, and are
+   inspected in error analysis.
+
+3. **ROT has a geometry shortcut, and it is entirely the EXIF tag.** Raw
+   pixel shape almost perfectly encodes the orientation tag: all 2,186
+   orientation-6 images are landscape-shaped, against 144 of 25,120
+   orientation-1 images. Landscape shape alone predicts ROT>=2 with AP
+   0.258 against a 0.170 base rate (ROT rate 50.5% landscape vs 13.8%
+   portrait). Within orientation 1, shape carries no signal (landscape
+   images 3.4% ROT vs 13.8%, AP 0.137 at a 0.137 base rate). The padded CNN
+   input preserves shape, so a CNN can reach about AP 0.26 on ROT without
+   reading content. Impact: every ROT result is reported against this
+   shape-only reference, and Stage F splits CNN ROT AP by EXIF orientation;
+   ROT performance on orientation-1 images is the evidence that a model
+   reads content. Preprocessing is unchanged, because the label refers to
+   raw orientation.
+
+4. **Annotator agreement is moderate at best, and FRM is the noisiest
+   label.** Fleiss' kappa from the 5-rater vote counts ranges 0.22-0.41
+   (BLR 0.41, ROT 0.38, UNREC 0.37, DRK 0.27, FRM 0.24, OBS 0.23, BRT 0.22).
+   FRM has 37.7% of images at the 2-3 vote boundary, where the >=2 label
+   flips on one rater. Expect a low ceiling on FRM for every arm; the Stage
+   G human ceiling is required to interpret FRM scores.
+
+5. **Flaws co-occur with blur.** P(BLR | flaw) is 64% for BRT, 64% for OBS
+   and 50% for DRK (lift 1.2-1.6). A model can score on DRK or BRT partly
+   through blur cues, and the reverse. Impact: error analysis reports
+   per-flaw results on images carrying that flaw alone, so that a classical
+   win on a photometric flaw is not a proxy for blur. ROT is close to
+   independent of the other flaws (lift 0.6-1.1).
+
+6. **DRK, OBS and BRT drive unrecognisability; ROT does not.**
+   Unrecognisable (>=2) rate is 48.0% with DRK, 48.1% with OBS and 41.6%
+   with BRT, against 13-14% without; FRM 19.2% vs 10.2%. Images with ROT
+   are less often unrecognisable (8.4% vs 16.6%, ratio 0.51), consistent
+   with ROT being partly a display artifact. The rate rises steadily with
+   the number of flaws (2.0% with none, 22.9% with two, 47.7% with four).
+   Impact on the Stage H demo: retake instructions prioritise DRK, OBS and
+   BRT; ROT is the lowest priority and is often fixable in software rather
+   than by retaking.
 <!-- findings:end -->
 
 ## Prevalence (% of images)
