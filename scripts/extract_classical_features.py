@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Extract classical quality features from the ORIGINAL images (never the
-256px CNN cache) at one or more fixed long-edge resolutions, writing one CSV
+224px CNN cache) at one or more fixed long-edge resolutions, writing one CSV
 per resolution. Each original is decoded once and resized per resolution,
 so every CSV comes from the same code path and the same features.
 
