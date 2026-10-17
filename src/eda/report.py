@@ -38,7 +38,11 @@ def _fmt(value):
     return str(value).replace("|", "\\|")
 
 
-def environment_lines():
+STAGE_B_GPU_NOTE = "not needed: Stage B reads labels and image headers only"
+STAGE_B_SEED_NOTE = "only randomness is the val/test split in src/data/splits.py"
+
+
+def environment_lines(gpu_note=STAGE_B_GPU_NOTE, seed_note=STAGE_B_SEED_NOTE):
     """Runtime description recorded in every report (Conventions)."""
     lines = [f"- Python {platform.python_version()} on {platform.platform()}"]
     try:
@@ -52,8 +56,8 @@ def environment_lines():
         gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "none"
     except ImportError:
         gpu = "none (torch not installed)"
-    lines.append(f"- GPU: {gpu} (not needed: Stage B reads labels and image headers only)")
-    lines.append("- Seed: 42 (only randomness is the val/test split in src/data/splits.py)")
+    lines.append(f"- GPU: {gpu} ({gpu_note})")
+    lines.append(f"- Seed: 42 ({seed_note})")
     return lines
 
 
@@ -67,15 +71,16 @@ def existing_findings(path):
     return FINDINGS_PLACEHOLDER
 
 
-def write_report(path, sections):
+def write_report(path, sections, title="Stage B: Exploratory Data Analysis",
+                 environment=None, findings_heading="Findings and impact on the modelling plan"):
     """sections: list of (heading, body) pairs, body already markdown."""
     path = Path(path)
     findings = existing_findings(path)
-    parts = ["# Stage B: Exploratory Data Analysis", "",
+    parts = [f"# {title}", "",
              "Partitions: train and val only. The test partition is not read "
              "during development.", "",
-             "## Environment", "", *environment_lines(), "",
-             "## Findings and impact on the modelling plan", "",
+             "## Environment", "", *(environment or environment_lines()), "",
+             f"## {findings_heading}", "",
              FINDINGS_START, findings, FINDINGS_END, ""]
     for heading, body in sections:
         parts += [f"## {heading}", "", body.strip(), ""]
