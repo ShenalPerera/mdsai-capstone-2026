@@ -12,7 +12,62 @@ Partitions: train and val only. The test partition is not read during developmen
 ## Findings (hypothesis check)
 
 <!-- findings:start -->
-_Findings not yet written._
+**Hypothesis supported.** Classical features are strong on the photometric flaws and weak on
+the semantic ones. Normalised gain = (AP - base rate) / (1 - base rate): 0 is a random scorer,
+1 is perfect. Classical arm entry, GB @ 224:
+
+| Output | Type | Base rate | AP | Gain |
+|---|---|---|---|---|
+| BLR | photometric | 0.422 | 0.809 | 0.67 |
+| DRK | photometric | 0.063 | 0.551 | 0.52 |
+| BRT | photometric | 0.058 | 0.472 | 0.44 |
+| FRM | semantic | 0.554 | 0.698 | 0.32 |
+| OBS | semantic | 0.035 | 0.126 | 0.09 |
+| ROT | semantic | 0.171 | 0.238 | 0.08 |
+| UNREC | overall | 0.156 | 0.730 | 0.68 |
+
+Gradient boosting edges logistic regression (macro AP over the six flaws 0.482 vs 0.464 at 224).
+The failure condition for this stage (weak everywhere including BLR, indicating a feature bug) is
+not met: BLR is the strongest flaw.
+
+1. **Photometric scores measure their own flaw, not co-occurring blur.** On images carrying no other
+   modelled flaw, gain holds or rises: DRK 0.52 -> 0.80, BRT 0.44 -> 0.43, BLR 0.67 -> 0.60
+   (GB @ 224). The single-flaw negatives are flaw-free images, an easier contrast, so these values
+   establish what the score responds to, not deployment performance. BRT (24 positives) and OBS
+   (17) are indicative only.
+2. **Logistic regression weights are physically sensible.** BLR is driven by Laplacian variance
+   (-4.84), DRK by mean luminance (-1.41), FRM by border edge energy (+1.10), UNREC by low
+   Tenengrad and Laplacian variance. OBS and ROT have no dominant feature, consistent with their
+   near-chance AP. Individual weights among the correlated detail features are not interpreted.
+3. **BRT reflects clipping and glare, not overall brightness.** Its weights are high clipped-bright
+   fraction (+1.24) and low centre detail (-2.41), with a negative weight on mean luminance
+   (-0.67): a partly blown-out frame with a dim subject. Of 18 fully white frames, 7 carry BRT and
+   all 18 carry UNREC: annotators label a blank white frame as unrecognisable rather than too
+   bright.
+4. **ROT is near chance for classical features and below the shape-only reference.** Overall ROT AP
+   0.238 vs 0.254 for landscape shape alone (val; 0.258 on train, Stage B). Within EXIF
+   orientation 1, where shape carries no signal, gain is 0.06 (AP 0.197, base 0.143). Within
+   orientation 6 (n = 238, base 0.609) AP reaches 0.747 (gain 0.35); all these images share one
+   shape, and the most likely signal is visible content (a sideways frame with no discernible
+   content is not labelled ROT). Unverified, small n. For Stage D, ROT counts as content
+   understanding only above 0.254 overall and above chance within orientation 1.
+5. **224 outperforms 512, outside the pre-registered interpretation rule** (which anticipated
+   224 = 512 or 512 better; docs/decisions.md). BLR AP 0.809 vs 0.774 (GB) and 0.798 vs 0.738 (LR),
+   and 224 is better or within 0.001 AP on every output. On natively small images (< 512 px, n = 361, upsampled
+   at 512) the gap is larger (GB 0.759 vs 0.710); on natively large images (n = 3,514, never
+   upsampled) it persists (GB 0.813 vs 0.780). Upsampling contributes but does not explain the
+   gap. Most consistent explanation (not directly tested): at 512 the sharpness measures respond to
+   sensor noise and compression texture that annotators did not perceive at viewing size. A
+   224 px input is therefore not a blur handicap for the CNN arm. classical@512 stays in the
+   Stage F table as the labelled practical-deployment row.
+6. **UNREC is a strong baseline.** AP 0.730, F1 0.610 at threshold 0.5. The dataset authors'
+   ResNet-152 reports F1 0.712 for poor-image detection on the official test split; the partitions
+   differ, so this is context, not a comparison.
+7. **Label noise is visible in the extremes.** A fully white frame (VizWiz_train_00000635.jpg,
+   luminance 255) carries DRK at >= 2 votes. Together with finding 3, this is consistent with the
+   low Stage B agreement on DRK (kappa 0.27) and BRT (0.22). Labels are used as published.
+8. **F1 at 0.5 is recall-heavy on rare flaws** (BRT precision 0.24, recall 0.75; OBS 0.08 / 0.58,
+   GB @ 224) because of balanced class weights. AP is the comparison metric.
 <!-- findings:end -->
 
 ## Data
