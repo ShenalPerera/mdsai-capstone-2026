@@ -26,6 +26,13 @@ def average_precision(y_true, score):
     return average_precision_score(y_true, score) if y_true.sum() else np.nan
 
 
+def normalised_gain(ap, base_rate):
+    """(AP - base rate) / (1 - base rate): the share of the distance from a
+    random scorer (0) to a perfect one (1). Makes AP comparable across
+    outputs with different base rates."""
+    return (ap - base_rate) / (1 - base_rate)
+
+
 def evaluate(targets, scores, threshold=THRESHOLD, flaws=MODELLED_FLAWS):
     """Per-output metrics plus a macro row over `flaws`.
     targets: 0/1 DataFrame; scores: DataFrame of probabilities, same index
