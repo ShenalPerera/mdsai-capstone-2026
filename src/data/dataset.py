@@ -1,5 +1,10 @@
 """
 PyTorch Dataset for VizWiz-QualityIssues images and labels.
+
+Images are read either from the original layout (images_dir/<train|val>/name)
+or from the extracted CNN image cache (flat=True: images_dir/name, the
+224px letterboxed JPEGs built by scripts/prepare_cache.py). Images are opened
+with PIL, which never applies EXIF orientation.
 """
 from pathlib import Path
 
@@ -35,9 +40,11 @@ class QualityIssuesDataset(Dataset):
         transform=DEFAULT_TRANSFORM,
         flaw_threshold=2,
         recognisability_threshold=2,
+        flat=False,
     ):
         self.records = records
         self.images_dir = Path(images_dir)
+        self.flat = flat
         self.transform = transform
         self.flaw_threshold = flaw_threshold
         self.recognisability_threshold = recognisability_threshold
@@ -46,6 +53,8 @@ class QualityIssuesDataset(Dataset):
         return len(self.records)
 
     def _image_path(self, image_name):
+        if self.flat:
+            return self.images_dir / image_name
         return self.images_dir / image_subdir(image_name) / image_name
 
     def __getitem__(self, idx):

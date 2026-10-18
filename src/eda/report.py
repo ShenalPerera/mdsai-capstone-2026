@@ -57,8 +57,22 @@ def environment_lines(gpu_note=STAGE_B_GPU_NOTE, seed_note=STAGE_B_SEED_NOTE):
     except ImportError:
         gpu = "none (torch not installed)"
     lines.append(f"- GPU: {gpu} ({gpu_note})")
+    lines.append(f"- Libraries: {library_versions()}")
     lines.append(f"- Seed: 42 ({seed_note})")
     return lines
+
+
+def library_versions():
+    """Installed versions of the numerical libraries, which on Colab can
+    differ from the pins in requirements.txt."""
+    from importlib import metadata
+    found = []
+    for name in ("numpy", "pandas", "scikit-learn", "torch", "torchvision"):
+        try:
+            found.append(f"{name} {metadata.version(name)}")
+        except metadata.PackageNotFoundError:
+            found.append(f"{name} not installed")
+    return ", ".join(found)
 
 
 def existing_findings(path):
