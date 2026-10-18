@@ -13,7 +13,77 @@ Partitions: train and val only. The test partition is not read during developmen
 ## Findings (hypothesis check)
 
 <!-- findings:start -->
-_Findings not yet written._
+**Hypothesis supported.** The CNN's advantage over the classical arm is concentrated in the
+semantic flaws, and the ROT gain comes from image content, not the raw-shape shortcut. Normalised
+gain = (AP - base rate) / (1 - base rate): 0 is a random scorer, 1 is perfect. CNN arm entry,
+EfficientNet-B0 fine-tuned (best epoch 3), against the classical entry GB @ 224, val:
+
+| Output | Type | Base rate | Classical AP | CNN AP | Classical gain | CNN gain | Difference |
+|---|---|---|---|---|---|---|---|
+| BLR | photometric | 0.422 | 0.809 | 0.885 | 0.67 | 0.80 | +0.13 |
+| DRK | photometric | 0.063 | 0.551 | 0.623 | 0.52 | 0.60 | +0.08 |
+| BRT | photometric | 0.058 | 0.472 | 0.564 | 0.44 | 0.54 | +0.10 |
+| FRM | semantic | 0.554 | 0.698 | 0.823 | 0.32 | 0.60 | +0.28 |
+| OBS | semantic | 0.035 | 0.126 | 0.563 | 0.09 | 0.55 | +0.45 |
+| ROT | semantic | 0.171 | 0.238 | 0.696 | 0.08 | 0.63 | +0.55 |
+| UNREC | overall | 0.156 | 0.730 | 0.802 | 0.68 | 0.77 | +0.09 |
+
+Macro AP over the six flaws: classical 0.482, CNN frozen 0.592, CNN fine-tuned 0.692. Mean gain by
+flaw type: photometric 0.54 -> 0.65 (+0.10), semantic 0.17 -> 0.59 (+0.43). The classical arm's
+photometric gain is about three times its semantic gain; the CNN is close to even across both. The
+CNN is ahead on every output, including blur, which the Stage D decision rule records as a valid
+outcome. The failure condition (CNN behind classical everywhere) is not met.
+
+1. **The ROT gain is content, not shape.** Overall ROT AP 0.696 against 0.254 for landscape shape
+   alone. Within EXIF orientation 1 (n = 3,637), where shape carries no signal (shape-only AP
+   0.143 = base rate), the fine-tuned CNN reaches AP 0.620, gain 0.56, against classical 0.197,
+   gain 0.06. Within orientation 6 (n = 238, every image landscape, base 0.609) it reaches 0.891,
+   gain 0.72; indicative, small n. Both bars set in Stage C are cleared; the frozen backbone
+   already clears them (0.581 within orientation 1).
+2. **On isolated exposure flaws the classical features match the CNN.** On images carrying no other
+   modelled flaw, gain: DRK 0.80 classical vs 0.85 CNN, BRT 0.43 vs 0.45 (24 positives,
+   indicative). The overall DRK/BRT advantage (+0.08/+0.10) narrows to +0.05/+0.02, so part of it
+   comes from images where exposure flaws co-occur with others. Direct luminance measurement is
+   adequate for exposure, as the hypothesis states. Blur is the exception: the CNN stays ahead on
+   blur alone (gain 0.60 vs 0.77). Semantic advantages hold or grow on single-flaw images: FRM
+   0.28 vs 0.60, ROT 0.04 vs 0.65, OBS 0.10 vs 0.69 (17 positives, indicative). Single-flaw
+   negatives are flaw-free images, an easier contrast; these values show what each score responds
+   to, not deployment performance.
+3. **Fine-tuning, not ImageNet features alone, produces the photometric advantage.** The frozen
+   backbone ties classical on BLR (0.809 vs 0.809) and DRK (0.545 vs 0.551) and trails on BRT
+   (0.412 vs 0.472), while already far ahead on the semantic flaws (ROT 0.637, OBS 0.354, FRM
+   0.795). ImageNet features encode object identity and pose, which the semantic flaws need, and
+   are largely invariant to blur and exposure; fine-tuning adapts them. One fine-tuned epoch
+   (macro AP 0.666) exceeds five frozen epochs (0.592). Input to Stage F ablation 3.
+4. **The CNN's blur advantage is larger on natively small images.** BLR AP on originals below
+   512 px (n = 361): classical 0.759, CNN 0.872; at 512 px and above (n = 3,514): 0.813 vs 0.887.
+   Classical loses 0.054 AP on small images, the CNN 0.015, consistent with pixel-level sharpness
+   measures degrading when small images are upscaled. Indicative (n = 361).
+5. **Fine-tuning overfits after epoch 3, unevenly across flaws.** Train loss falls from 0.488 to
+   0.332 over epochs 3-6 while val macro AP stays at 0.683-0.692. Per flaw, the frequent semantic
+   flaws keep improving (ROT 0.696 -> 0.709, FRM 0.823 -> 0.832) while the rare ones decline (BRT
+   0.564 -> 0.512, OBS 0.563 -> 0.543, UNREC 0.802 -> 0.781). A single shared stopping point on
+   macro AP is kept (selecting per flaw would tune on val); the divergence is an observation for
+   Stage F.
+6. **At the fixed 0.5 threshold the CNN favours recall on rare flaws.** Recall is 0.74-0.83 on every
+   output; precision follows prevalence: BLR 0.83, FRM 0.78, ROT 0.52, BRT 0.28, DRK 0.27, OBS 0.18
+   (about 600 images flagged OBS to find 107 of 137). This is the effect of pos_weight balancing
+   (OBS about 27), shared with the class-weighted classical arm; AP is unaffected. Macro F1 at 0.5:
+   classical 0.430, CNN 0.548. Any operating threshold for the Stage H demo must be set without
+   the val numbers reported here.
+7. **Recognisability.** UNREC AP 0.802 (classical 0.730), F1 0.642 at 0.5 (classical 0.610). The
+   frozen model's F1 is marginally higher (0.655) at lower AP (0.775): a fixed-threshold artefact of
+   its slightly more conservative scores. The dataset authors report F1 0.712 (ResNet-152) for
+   poor-image detection on the official test split, whose labels are withheld; their baseline code
+   stretches images to 448 x 448. Different split and input, so context rather than a direct
+   comparison.
+
+Caveats: the best epoch was selected on the same val partition it is scored on, so CNN val numbers
+are slightly optimistic (epochs 3-6 differ by under 0.01 macro AP); the test half, read once at the
+end, gives the unbiased figure. BRT, DRK and OBS have 137-244 val positives, and epoch-to-epoch
+swings of up to 0.05 AP on BRT show their per-flaw values are noisy. Training ran on Colab
+library versions newer than the requirements.txt pins (torch 2.11.0, scikit-learn 1.6.1),
+recorded under Training runs.
 <!-- findings:end -->
 
 ## Data
