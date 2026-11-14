@@ -31,12 +31,21 @@ cnn_<mode>. --seed N (default 42) changes every random draw; runs with a seed
 other than 42 get a _seed<N> suffix on their folder and prediction file, so
 they never overwrite the seed-42 entries. They measure run-to-run spread.
 
+Stage F ablations (each changes one thing; outputs get a suffix):
+  --flaw-threshold 1   train flaw labels at >=1 vote instead of >=2 (UNREC
+                       stays >=2). Validation scoring and early stopping still
+                       use the >=2 labels, so the measured task is unchanged.
+                       Suffix _votes1.
+  --random-init        no ImageNet weights: the same network from random
+                       initialisation, recipe unchanged. Suffix _scratch.
+
 Resumable: rerunning the same command continues from last.pt; a finished run
 only rewrites its outputs. Progress line every 30 s.
 
 Usage:
   python -u scripts/train_cnn.py DATA_DIR --cache-dir DIR --mode {overfit,frozen,finetune}
-      [--hybrid] [--seed 42] [--out-dir DIR] [--epochs N] [--batch-size 64] [--workers N]
+      [--hybrid] [--seed 42] [--flaw-threshold 2] [--random-init]
+      [--out-dir DIR] [--epochs N] [--batch-size 64] [--workers N]
 """
 import argparse
 import json
@@ -200,6 +209,9 @@ def main():
     parser.add_argument("--hybrid", action="store_true",
                         help="add the classical features as extra head inputs (Stage E)")
     parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--flaw-threshold", type=int, choices=(1, 2), default=2,
+                        help="votes for a TRAINING flaw label (val always uses >=2)")
+    parser.add_argument("--random-init", action="store_true", help="no ImageNet weights (ablation)")
     parser.add_argument("--out-dir", type=Path, default=None)
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=64)
@@ -208,7 +220,8 @@ def main():
 
     mode, seed = args.mode, args.seed
     seed_suffix = "" if seed == SEED else f"_seed{seed}"
-    run_name = ("hybrid_" if args.hybrid else "") + mode + seed_suffix
+    ablation_suffix = ("_votes1" if args.flaw_threshold == 1 else "") + ("_scratch" if args.random_init else "")
+    run_name = ("hybrid_" if args.hybrid else "") + mode + ablation_suffix + seed_suffix
     out_dir = args.out_dir or args.data_dir / "cnn_runs" / run_name
     out_dir.mkdir(parents=True, exist_ok=True)
     max_epochs = args.epochs or MODE_DEFAULTS[mode]
@@ -216,8 +229,13 @@ def main():
               "lr_head": LR_HEAD, "lr_backbone": None if mode == "frozen" else LR_BACKBONE,
               "patience": None if mode == "overfit" else PATIENCE, "seed": seed,
               "backbone": "efficientnet_b0 IMAGENET1K_V1"}
-    if args.hybrid:  # key only present for hybrid runs, so Stage D checkpoints still resume
+    # Keys below appear only when set, so checkpoints from earlier runs still resume
+    if args.hybrid:
         config["extra_features"] = f"classical_features_{HYBRID_RESOLUTION}: " + ", ".join(FEATURE_NAMES)
+    if args.flaw_threshold != 2:
+        config["train_flaw_threshold"] = args.flaw_threshold
+    if args.random_init:
+        config["backbone"] = "efficientnet_b0, random initialisation"
 
     seed_everything(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -226,7 +244,9 @@ def main():
                    "python": platform.python_version(), "libraries": library_versions()}
     print(f"[train] mode {mode} | max {max_epochs} epochs | batch {args.batch_size} | "
           f"device {environment['gpu']} | AMP {use_amp} | seed {seed}"
-          + (" | HYBRID" if args.hybrid else ""))
+          + (" | HYBRID" if args.hybrid else "")
+          + (f" | TRAIN FLAWS >= {args.flaw_threshold} VOTES" if args.flaw_threshold != 2 else "")
+          + (" | RANDOM INIT" if args.random_init else ""))
     print(f"[train] {environment['libraries']}")
 
     # Data: train and val only. Labels come from the annotation records.
@@ -236,10 +256,13 @@ def main():
                if not (args.cache_dir / r["image"]).exists()]
     if missing:
         sys.exit(f"[train] {len(missing)} images missing from {args.cache_dir}, e.g. {missing[:3]}")
-    train_targets = build_targets(train_records)
+    train_targets = build_targets(train_records, flaw_threshold=args.flaw_threshold)
     weights = pos_weights(train_targets)
     print(f"[train] {len(train_records):,} train / {len(val_records):,} val images "
           f"(test partition not loaded)")
+    if args.flaw_threshold != 2:
+        print(f"[train] training flaw labels at >= {args.flaw_threshold} vote(s); val scored at >= 2. "
+              "Train positives: " + " ".join(f"{o} {int(n)}" for o, n in train_targets.sum().items()))
     print("[train] pos_weight (neg/pos on train): "
           + " ".join(f"{o} {w:.2f}" for o, w in zip(OUTPUTS, weights.tolist())))
 
@@ -260,7 +283,9 @@ def main():
               f"{extra.loc[train_names].mean().abs().max():.3f}, std {extra.loc[train_names].std().mean():.3f})")
 
     def dataset(records, train):
-        return QualityIssuesDataset(records, args.cache_dir, image_transform(train), flat=True, extra=extra)
+        """Training images carry the training flaw threshold; val is always >=2."""
+        return QualityIssuesDataset(records, args.cache_dir, image_transform(train), flat=True, extra=extra,
+                                    flaw_threshold=args.flaw_threshold if train else 2)
 
     if mode == "overfit":
         subset = sorted(random.Random(SEED).sample(range(len(train_records)), OVERFIT_IMAGES))
@@ -273,12 +298,15 @@ def main():
 
     # Model. Comparing the first convolution with a randomly initialised
     # copy shows the ImageNet weights were actually loaded.
-    model = QualityNet(pretrained=True, freeze_backbone=(mode == "frozen"),
+    model = QualityNet(pretrained=not args.random_init, freeze_backbone=(mode == "frozen"),
                        n_extra=len(FEATURE_NAMES) if args.hybrid else 0).to(device)
-    random_conv = QualityNet(pretrained=False).backbone[0][0].weight
-    loaded_diff = (model.backbone[0][0].weight.detach().cpu() - random_conv.detach()).abs().mean().item()
-    print(f"[train] ImageNet weights loaded: first conv differs from random init by "
-          f"{loaded_diff:.4f} (0 would mean not loaded)")
+    if args.random_init:
+        print("[train] random initialisation: no ImageNet weights (ablation)")
+    else:
+        random_conv = QualityNet(pretrained=False).backbone[0][0].weight
+        loaded_diff = (model.backbone[0][0].weight.detach().cpu() - random_conv.detach()).abs().mean().item()
+        print(f"[train] ImageNet weights loaded: first conv differs from random init by "
+              f"{loaded_diff:.4f} (0 would mean not loaded)")
     n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     n_total = sum(p.numel() for p in model.parameters())
     print(f"[train] trainable parameters {n_trainable:,} of {n_total:,}")
@@ -369,13 +397,13 @@ def main():
     print(f"[train] best epoch {state['best_epoch']} (val macro AP {state['best_ap']:.4f}): writing outputs")
     eval_train = dataset(train_records, False)
     # Embeddings feed Stage E: only the seed-42 CNN fine-tune writes them
-    with_embeddings = mode == "finetune" and not args.hybrid and seed == SEED
+    with_embeddings = run_name == "finetune"
     val_out = predict(model, make_loader(val_set, args.batch_size, False, args.workers),
                       device, use_amp, with_embeddings, label="val")
     val_scores = val_out[0] if with_embeddings else val_out
     predictions_dir = args.data_dir / "predictions"
     predictions_dir.mkdir(parents=True, exist_ok=True)
-    predictions_path = predictions_dir / f"{'hybrid' if args.hybrid else 'cnn'}_{mode}{seed_suffix}_val.csv"
+    predictions_path = predictions_dir / f"{'hybrid' if args.hybrid else 'cnn'}_{mode}{ablation_suffix}{seed_suffix}_val.csv"
     val_scores.to_csv(predictions_path)
     print(f"[train] val scores -> {predictions_path}")
     if with_embeddings:

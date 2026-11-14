@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import average_precision_score, precision_recall_fscore_support
 
-from src.data.splits import MODELLED_FLAWS
+from src.data.splits import MODELLED_FLAWS, SEED
 
 THRESHOLD = 0.5
 MACRO = "macro (6 flaws)"
@@ -76,3 +76,60 @@ def single_flaw_ap(targets, scores, flaws=MODELLED_FLAWS):
             "AP": average_precision(y, scores.loc[y.index, flaw]),
         }
     return pd.DataFrame(rows).T
+
+
+def bootstrap_ap(targets, scores, n_resamples=1000, seed=SEED, flaws=MODELLED_FLAWS):
+    """AP on bootstrap resamples of the images, for several score sets at once.
+
+    targets: 0/1 DataFrame; scores: {name: DataFrame of probabilities, same
+    index and columns}. Every score set is evaluated on the SAME resampled
+    images in each draw, so differences between two sets are paired.
+    Returns {name: DataFrame, one row per resample, one column per output plus
+    MACRO (mean AP over `flaws`)}. The spread reflects which val images happen
+    to be in the partition, not training randomness (that is the seed spread)."""
+    rng = np.random.default_rng(seed)
+    y = targets.to_numpy()
+    arrays = {name: s.loc[targets.index, targets.columns].to_numpy() for name, s in scores.items()}
+    flaw_cols = [targets.columns.get_loc(f) for f in flaws]
+    draws = {name: [] for name in scores}
+    for _ in range(n_resamples):
+        idx = rng.integers(0, len(y), len(y))
+        yb = y[idx]
+        for name, s in arrays.items():
+            aps = [average_precision(yb[:, j], s[idx, j]) for j in range(y.shape[1])]
+            draws[name].append(aps + [np.nanmean([aps[j] for j in flaw_cols])])
+    columns = list(targets.columns) + [MACRO]
+    return {name: pd.DataFrame(d, columns=columns) for name, d in draws.items()}
+
+
+def percentile_interval(draws, level=0.95):
+    """Percentile interval per column of a bootstrap draws DataFrame:
+    DataFrame with columns low, high (one row per output)."""
+    tail = (1 - level) / 2 * 100
+    return pd.DataFrame({"low": np.nanpercentile(draws, tail, axis=0),
+                         "high": np.nanpercentile(draws, 100 - tail, axis=0)}, index=draws.columns)
+
+
+def ap_with_interval(targets, scores, n_resamples=1000, seed=SEED, level=0.95):
+    """AP and its bootstrap percentile interval per output (plus MACRO), for
+    each score set: {name: DataFrame with columns AP, low, high}."""
+    draws = bootstrap_ap(targets, scores, n_resamples, seed)
+    tables = {}
+    for name, s in scores.items():
+        table = percentile_interval(draws[name], level)
+        table.insert(0, "AP", evaluate(targets, s).loc[table.index, "AP"].astype(float))
+        tables[name] = table
+    return tables
+
+
+def paired_difference(targets, scores_a, scores_b, n_resamples=1000, seed=SEED, level=0.95):
+    """AP(a) - AP(b) per output (plus MACRO) with a paired bootstrap interval:
+    both score sets are evaluated on the same resampled images. An interval
+    that excludes 0 means the difference is larger than the variation due to
+    which images are in the val partition (training randomness is separate)."""
+    draws = bootstrap_ap(targets, {"a": scores_a, "b": scores_b}, n_resamples, seed)
+    table = percentile_interval(draws["a"] - draws["b"], level)
+    point = evaluate(targets, scores_a)["AP"].astype(float) - evaluate(targets, scores_b)["AP"].astype(float)
+    table.insert(0, "difference", point.loc[table.index])
+    table["excludes 0"] = (table["low"] > 0) | (table["high"] < 0)
+    return table

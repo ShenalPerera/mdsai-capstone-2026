@@ -23,6 +23,20 @@ from pathlib import Path
 TRAIN = Path(__file__).resolve().parent / "train_cnn.py"
 
 
+def run_queue(data_dir, cache_dir, runs, tag):
+    """Run train_cnn.py --mode finetune once per (name, extra args) in `runs`,
+    in order, printing a "[tag] run i/n" line before each. Stops at the first
+    failure; a rerun resumes, since finished runs only rewrite their outputs."""
+    start = time.time()
+    for i, (name, extra_args) in enumerate(runs, 1):
+        print(f"[{tag}] run {i}/{len(runs)}: {name}", flush=True)
+        cmd = [sys.executable, "-u", str(TRAIN), str(data_dir), "--cache-dir", str(cache_dir),
+               "--mode", "finetune"] + extra_args
+        if subprocess.call(cmd) != 0:
+            sys.exit(f"[{tag}] FAILED at run {i}/{len(runs)} ({name}); rerun to resume")
+    print(f"[{tag}] DONE: {len(runs)} runs in {(time.time() - start) / 60:.0f} min", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("data_dir", type=Path)
@@ -31,16 +45,9 @@ def main():
     args = parser.parse_args()
 
     seeds = [int(s) for s in args.seeds.split(",")]
-    runs = [(seed, hybrid) for seed in seeds for hybrid in (False, True)]
-    start = time.time()
-    for i, (seed, hybrid) in enumerate(runs, 1):
-        name = f"{'hybrid' if hybrid else 'CNN'} seed {seed}"
-        print(f"[seeds] run {i}/{len(runs)}: {name}", flush=True)
-        cmd = [sys.executable, "-u", str(TRAIN), str(args.data_dir), "--cache-dir", str(args.cache_dir),
-               "--mode", "finetune", "--seed", str(seed)] + (["--hybrid"] if hybrid else [])
-        if subprocess.call(cmd) != 0:
-            sys.exit(f"[seeds] FAILED at run {i}/{len(runs)} ({name}); rerun to resume")
-    print(f"[seeds] DONE: {len(runs)} runs in {(time.time() - start) / 60:.0f} min", flush=True)
+    runs = [(f"{'hybrid' if hybrid else 'CNN'} seed {seed}", ["--seed", str(seed)] + (["--hybrid"] if hybrid else []))
+            for seed in seeds for hybrid in (False, True)]
+    run_queue(args.data_dir, args.cache_dir, runs, "seeds")
 
 
 if __name__ == "__main__":

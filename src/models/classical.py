@@ -48,10 +48,12 @@ def load_features(data_dir, resolution):
     return pd.read_csv(path, index_col="image")
 
 
-def build_targets(records):
+def build_targets(records, flaw_threshold=2):
     """0/1 targets, one row per image, one column per output. Thresholds come
-    from src/data/splits.py so labels are defined in one place."""
-    rows = [flaw_vector(r) + [recognisability_target(r)] for r in records]
+    from src/data/splits.py so labels are defined in one place. flaw_threshold
+    (votes needed for a flaw to count) is 2 everywhere except the >=1-vote
+    training ablation (Stage F); UNREC always uses the authors' >=2."""
+    rows = [flaw_vector(r, threshold=flaw_threshold) + [recognisability_target(r)] for r in records]
     return pd.DataFrame(rows, index=[r["image"] for r in records], columns=OUTPUTS)
 
 
