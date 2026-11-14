@@ -11,6 +11,12 @@ the same columns as the classical arm, so both are scored by
 src/models/metrics.py. The 1280-d embedding is exposed for the hybrid arm
 (Stage E).
 
+Hybrid (Stage E, n_extra > 0): extra per-image features (the classical
+features, log1p + standardised) are concatenated to the embedding after
+dropout, so the heads see 1280 + n_extra inputs. Dropout acts on the CNN
+embedding only and never hides a hand-crafted feature. n_extra = 0 is the
+Stage D model, parameter for parameter.
+
 Two training regimes:
 - frozen: backbone weights fixed and kept in eval mode (BatchNorm running
   statistics stay at their ImageNet values); only the heads learn.
@@ -42,15 +48,16 @@ def image_transform(train):
 
 
 class QualityNet(nn.Module):
-    def __init__(self, pretrained=True, freeze_backbone=False):
+    def __init__(self, pretrained=True, freeze_backbone=False, n_extra=0):
         super().__init__()
         weights = EfficientNet_B0_Weights.IMAGENET1K_V1 if pretrained else None
         net = efficientnet_b0(weights=weights, progress=False)
         self.backbone = net.features
         self.pool = net.avgpool
         self.dropout = nn.Dropout(DROPOUT)
-        self.flaw_head = nn.Linear(EMBEDDING_DIM, len(MODELLED_FLAWS))
-        self.unrec_head = nn.Linear(EMBEDDING_DIM, 1)
+        self.n_extra = n_extra
+        self.flaw_head = nn.Linear(EMBEDDING_DIM + n_extra, len(MODELLED_FLAWS))
+        self.unrec_head = nn.Linear(EMBEDDING_DIM + n_extra, 1)
         self.freeze_backbone = freeze_backbone
         if freeze_backbone:
             for p in self.backbone.parameters():
@@ -67,9 +74,11 @@ class QualityNet(nn.Module):
     def embed(self, x):
         return torch.flatten(self.pool(self.backbone(x)), 1)
 
-    def forward(self, x, return_embedding=False):
+    def forward(self, x, extra=None, return_embedding=False):
         embedding = self.embed(x)
         h = self.dropout(embedding)
+        if self.n_extra:
+            h = torch.cat([h, extra.to(h.dtype)], dim=1)
         logits = torch.cat([self.flaw_head(h), self.unrec_head(h)], dim=1)
         return (logits, embedding) if return_embedding else logits
 

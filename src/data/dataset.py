@@ -5,6 +5,10 @@ Images are read either from the original layout (images_dir/<train|val>/name)
 or from the extracted CNN image cache (flat=True: images_dir/name, the
 224px letterboxed JPEGs built by scripts/prepare_cache.py). Images are opened
 with PIL, which never applies EXIF orientation.
+
+extra (optional): a DataFrame of per-image numeric features indexed by image
+name, e.g. the classical features for the hybrid arm. Rows are looked up by
+name, never by position, so features cannot drift out of step with images.
 """
 from pathlib import Path
 
@@ -41,10 +45,18 @@ class QualityIssuesDataset(Dataset):
         flaw_threshold=2,
         recognisability_threshold=2,
         flat=False,
+        extra=None,
     ):
         self.records = records
         self.images_dir = Path(images_dir)
         self.flat = flat
+        self.extra = None
+        if extra is not None:
+            names = [r["image"] for r in records]
+            missing = [n for n in names if n not in extra.index]
+            if missing:
+                raise ValueError(f"{len(missing)} images have no extra features, e.g. {missing[:3]}")
+            self.extra = extra.astype("float32")
         self.transform = transform
         self.flaw_threshold = flaw_threshold
         self.recognisability_threshold = recognisability_threshold
@@ -75,10 +87,13 @@ class QualityIssuesDataset(Dataset):
             dtype=torch.float32,
         )
 
-        return {
+        item = {
             "image": image,
             "flaw_targets": flaw_targets,
             "raw_votes": raw_votes,
             "recognisability_target": recognisability,
             "image_name": image_name,
         }
+        if self.extra is not None:
+            item["extra"] = torch.from_numpy(self.extra.loc[image_name].to_numpy())
+        return item

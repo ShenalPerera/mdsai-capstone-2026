@@ -55,15 +55,25 @@ def build_targets(records):
     return pd.DataFrame(rows, index=[r["image"] for r in records], columns=OUTPUTS)
 
 
+def log_transform():
+    """log1p on the heavy-tailed LOG_FEATURES, other features passed through."""
+    return ColumnTransformer(
+        [("log1p", FunctionTransformer(np.log1p, feature_names_out="one-to-one"), LOG_FEATURES)],
+        remainder="passthrough",
+        verbose_feature_names_out=False,
+    )
+
+
+def feature_preprocessor():
+    """log1p then standardise: the logistic-regression input preparation,
+    shared with the hybrid arm (Stage E). Fit on the training partition only."""
+    return Pipeline([("log", log_transform()), ("scale", StandardScaler())])
+
+
 def make_model(kind):
     if kind == "lr":
-        log = ColumnTransformer(
-            [("log1p", FunctionTransformer(np.log1p, feature_names_out="one-to-one"), LOG_FEATURES)],
-            remainder="passthrough",
-            verbose_feature_names_out=False,
-        )
         return Pipeline([
-            ("log", log),
+            ("log", log_transform()),
             ("scale", StandardScaler()),
             ("clf", LogisticRegression(class_weight="balanced", max_iter=1000)),
         ])

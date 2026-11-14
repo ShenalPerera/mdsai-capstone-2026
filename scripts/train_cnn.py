@@ -24,12 +24,19 @@ Outputs (OUT_DIR defaults to DATA_DIR/cnn_runs/<mode>):
   embeddings.npz  (finetune) 1280-d embeddings of train and val from the
                 best epoch, for the hybrid arm (Stage E)
 
+--hybrid (Stage E) adds the ten classical features at 224 px
+(DATA_DIR/classical_features_224.csv, log1p + standardised, fitted on train)
+as extra head inputs; outputs are named hybrid_<mode> instead of <mode> /
+cnn_<mode>. --seed N (default 42) changes every random draw; runs with a seed
+other than 42 get a _seed<N> suffix on their folder and prediction file, so
+they never overwrite the seed-42 entries. They measure run-to-run spread.
+
 Resumable: rerunning the same command continues from last.pt; a finished run
 only rewrites its outputs. Progress line every 30 s.
 
 Usage:
   python -u scripts/train_cnn.py DATA_DIR --cache-dir DIR --mode {overfit,frozen,finetune}
-      [--out-dir DIR] [--epochs N] [--batch-size 64] [--workers N]
+      [--hybrid] [--seed 42] [--out-dir DIR] [--epochs N] [--batch-size 64] [--workers N]
 """
 import argparse
 import json
@@ -50,8 +57,9 @@ sys.path.insert(0, str(REPO_DIR))
 from src.data.dataset import QualityIssuesDataset  # noqa: E402
 from src.data.splits import SEED, get_splits  # noqa: E402
 from src.eda.report import library_versions  # noqa: E402
+from src.features.classical import FEATURE_NAMES  # noqa: E402
 from src.models import metrics  # noqa: E402
-from src.models.classical import OUTPUTS, UNREC, build_targets  # noqa: E402
+from src.models.classical import OUTPUTS, UNREC, build_targets, feature_preprocessor, load_features  # noqa: E402
 from src.models.cnn import QualityNet, image_transform, pos_weights  # noqa: E402
 
 PROGRESS_INTERVAL_SEC = 30
@@ -61,6 +69,7 @@ LR_BACKBONE = 1e-4
 PATIENCE = 3
 OVERFIT_IMAGES = 200
 OVERFIT_TARGET_LOSS = 0.05
+HYBRID_RESOLUTION = 224  # classical features matched to the CNN input size
 
 
 def fmt_time(seconds):
@@ -83,11 +92,11 @@ def save_atomic(obj, path):
     os.replace(tmp, path)
 
 
-def make_loader(dataset, batch_size, shuffle, workers, epoch=0):
+def make_loader(dataset, batch_size, shuffle, workers, epoch=0, seed=SEED):
     """The shuffle order and the workers' flip randomness are seeded from
-    SEED + epoch (dropout likewise, in the training loop), so a resumed run
+    seed + epoch (dropout likewise, in the training loop), so a resumed run
     replays exactly the epochs it missed."""
-    generator = torch.Generator().manual_seed(SEED + epoch)
+    generator = torch.Generator().manual_seed(seed + epoch)
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=workers,
                       generator=generator, pin_memory=torch.cuda.is_available())
 
@@ -112,16 +121,23 @@ class Progress:
               f"ETA {fmt_time((self.total - done) / rate)}{extra}")
 
 
+def model_inputs(batch, device):
+    """Images, plus the hybrid's extra features when the dataset has them."""
+    images = batch["image"].to(device, non_blocking=True)
+    extra = batch["extra"].to(device, non_blocking=True) if "extra" in batch else None
+    return images, extra
+
+
 def train_one_epoch(model, loader, criterion, optimiser, scaler, device, label):
     model.train()
     progress = Progress(label, len(loader), "batches")
     total_loss, total_n = 0.0, 0
     for i, batch in enumerate(loader, 1):
-        images = batch["image"].to(device, non_blocking=True)
+        images, extra = model_inputs(batch, device)
         targets = torch.cat([batch["flaw_targets"], batch["recognisability_target"][:, None]],
                             dim=1).to(device)
         with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=scaler.is_enabled()):
-            logits = model(images)
+            logits = model(images, extra)
         # loss in float32: mean BCE over the 7 outputs, each pos_weight-balanced
         loss = criterion(logits.float(), targets)
         optimiser.zero_grad(set_to_none=True)
@@ -141,11 +157,11 @@ def fit_loss(model, loader, criterion, device, use_amp):
     model.eval()
     total_loss, total_n = 0.0, 0
     for batch in loader:
-        images = batch["image"].to(device, non_blocking=True)
+        images, extra = model_inputs(batch, device)
         targets = torch.cat([batch["flaw_targets"], batch["recognisability_target"][:, None]],
                             dim=1).to(device)
         with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
-            logits = model(images)
+            logits = model(images, extra)
         total_loss += criterion(logits.float(), targets).item() * len(images)
         total_n += len(images)
     return total_loss / total_n
@@ -159,9 +175,9 @@ def predict(model, loader, device, use_amp, with_embeddings=False, label="scorin
     progress = Progress(label, len(loader), "batches")
     names, scores, embeddings = [], [], []
     for i, batch in enumerate(loader, 1):
-        images = batch["image"].to(device, non_blocking=True)
+        images, extra = model_inputs(batch, device)
         with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
-            logits, embedding = model(images, return_embedding=True)
+            logits, embedding = model(images, extra, return_embedding=True)
         names += list(batch["image_name"])
         scores.append(torch.sigmoid(logits.float()).cpu().numpy())
         if with_embeddings:
@@ -181,28 +197,36 @@ def main():
     parser.add_argument("--cache-dir", type=Path, required=True,
                         help="folder holding the extracted cache images (flat)")
     parser.add_argument("--mode", choices=list(MODE_DEFAULTS), required=True)
+    parser.add_argument("--hybrid", action="store_true",
+                        help="add the classical features as extra head inputs (Stage E)")
+    parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--out-dir", type=Path, default=None)
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--workers", type=int, default=min(4, os.cpu_count() or 1))
     args = parser.parse_args()
 
-    mode = args.mode
-    out_dir = args.out_dir or args.data_dir / "cnn_runs" / mode
+    mode, seed = args.mode, args.seed
+    seed_suffix = "" if seed == SEED else f"_seed{seed}"
+    run_name = ("hybrid_" if args.hybrid else "") + mode + seed_suffix
+    out_dir = args.out_dir or args.data_dir / "cnn_runs" / run_name
     out_dir.mkdir(parents=True, exist_ok=True)
     max_epochs = args.epochs or MODE_DEFAULTS[mode]
     config = {"mode": mode, "max_epochs": max_epochs, "batch_size": args.batch_size,
               "lr_head": LR_HEAD, "lr_backbone": None if mode == "frozen" else LR_BACKBONE,
-              "patience": None if mode == "overfit" else PATIENCE, "seed": SEED,
+              "patience": None if mode == "overfit" else PATIENCE, "seed": seed,
               "backbone": "efficientnet_b0 IMAGENET1K_V1"}
+    if args.hybrid:  # key only present for hybrid runs, so Stage D checkpoints still resume
+        config["extra_features"] = f"classical_features_{HYBRID_RESOLUTION}: " + ", ".join(FEATURE_NAMES)
 
-    seed_everything(SEED)
+    seed_everything(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     use_amp = device.type == "cuda"
     environment = {"gpu": torch.cuda.get_device_name(0) if use_amp else "none (CPU)",
                    "python": platform.python_version(), "libraries": library_versions()}
     print(f"[train] mode {mode} | max {max_epochs} epochs | batch {args.batch_size} | "
-          f"device {environment['gpu']} | AMP {use_amp} | seed {SEED}")
+          f"device {environment['gpu']} | AMP {use_amp} | seed {seed}"
+          + (" | HYBRID" if args.hybrid else ""))
     print(f"[train] {environment['libraries']}")
 
     # Data: train and val only. Labels come from the annotation records.
@@ -219,19 +243,38 @@ def main():
     print("[train] pos_weight (neg/pos on train): "
           + " ".join(f"{o} {w:.2f}" for o, w in zip(OUTPUTS, weights.tolist())))
 
+    # Hybrid: classical features, preprocessing fitted on train only
+    extra = None
+    if args.hybrid:
+        features = load_features(args.data_dir, HYBRID_RESOLUTION)[FEATURE_NAMES]
+        train_names = [r["image"] for r in train_records]
+        names = train_names + [r["image"] for r in val_records]
+        missing = [n for n in names if n not in features.index]
+        if missing:
+            sys.exit(f"[train] {len(missing)} images missing from classical_features_{HYBRID_RESOLUTION}.csv, "
+                     f"e.g. {missing[:3]}")
+        preprocessor = feature_preprocessor().fit(features.loc[train_names])
+        extra = pd.DataFrame(preprocessor.transform(features.loc[names]), index=names, columns=FEATURE_NAMES)
+        print(f"[train] hybrid: {len(FEATURE_NAMES)} classical features @ {HYBRID_RESOLUTION}px, "
+              f"log1p + standardised on train (train mean |max| "
+              f"{extra.loc[train_names].mean().abs().max():.3f}, std {extra.loc[train_names].std().mean():.3f})")
+
+    def dataset(records, train):
+        return QualityIssuesDataset(records, args.cache_dir, image_transform(train), flat=True, extra=extra)
+
     if mode == "overfit":
         subset = sorted(random.Random(SEED).sample(range(len(train_records)), OVERFIT_IMAGES))
-        train_set = Subset(QualityIssuesDataset(train_records, args.cache_dir, image_transform(False),
-                                                flat=True), subset)
+        train_set = Subset(dataset(train_records, False), subset)
         print(f"[train] overfit subset: {OVERFIT_IMAGES} fixed train images, no flip")
     else:
-        train_set = QualityIssuesDataset(train_records, args.cache_dir, image_transform(True), flat=True)
-    val_set = QualityIssuesDataset(val_records, args.cache_dir, image_transform(False), flat=True)
+        train_set = dataset(train_records, True)
+    val_set = dataset(val_records, False)
     val_targets = build_targets(val_records)
 
     # Model. Comparing the first convolution with a randomly initialised
     # copy shows the ImageNet weights were actually loaded.
-    model = QualityNet(pretrained=True, freeze_backbone=(mode == "frozen")).to(device)
+    model = QualityNet(pretrained=True, freeze_backbone=(mode == "frozen"),
+                       n_extra=len(FEATURE_NAMES) if args.hybrid else 0).to(device)
     random_conv = QualityNet(pretrained=False).backbone[0][0].weight
     loaded_diff = (model.backbone[0][0].weight.detach().cpu() - random_conv.detach()).abs().mean().item()
     print(f"[train] ImageNet weights loaded: first conv differs from random init by "
@@ -265,8 +308,8 @@ def main():
     while not state["finished"] and state["epoch"] < max_epochs:
         epoch = state["epoch"] + 1
         epoch_start = time.time()
-        seed_everything(SEED + epoch)
-        loader = make_loader(train_set, args.batch_size, True, args.workers, epoch)
+        seed_everything(seed + epoch)
+        loader = make_loader(train_set, args.batch_size, True, args.workers, epoch, seed)
         train_loss = train_one_epoch(model, loader, criterion, optimiser, scaler, device,
                                      f"epoch {epoch}/{max_epochs}")
         record = {"epoch": epoch, "train_loss": train_loss}
@@ -324,14 +367,15 @@ def main():
     # Outputs from the best epoch
     model.load_state_dict(torch.load(best_path, map_location=device, weights_only=True))
     print(f"[train] best epoch {state['best_epoch']} (val macro AP {state['best_ap']:.4f}): writing outputs")
-    eval_train = QualityIssuesDataset(train_records, args.cache_dir, image_transform(False), flat=True)
-    with_embeddings = mode == "finetune"
+    eval_train = dataset(train_records, False)
+    # Embeddings feed Stage E: only the seed-42 CNN fine-tune writes them
+    with_embeddings = mode == "finetune" and not args.hybrid and seed == SEED
     val_out = predict(model, make_loader(val_set, args.batch_size, False, args.workers),
                       device, use_amp, with_embeddings, label="val")
     val_scores = val_out[0] if with_embeddings else val_out
     predictions_dir = args.data_dir / "predictions"
     predictions_dir.mkdir(parents=True, exist_ok=True)
-    predictions_path = predictions_dir / f"cnn_{mode}_val.csv"
+    predictions_path = predictions_dir / f"{'hybrid' if args.hybrid else 'cnn'}_{mode}{seed_suffix}_val.csv"
     val_scores.to_csv(predictions_path)
     print(f"[train] val scores -> {predictions_path}")
     if with_embeddings:
