@@ -24,6 +24,7 @@ Two training regimes:
   than the randomly initialised heads, so the pretrained features are
   adjusted rather than overwritten.
 """
+import pandas as pd
 import torch
 from torch import nn
 from torchvision import transforms as T
@@ -99,3 +100,13 @@ def pos_weights(targets):
     arm's class_weight="balanced". targets: 0/1 DataFrame with OUTPUTS columns."""
     pos = targets[OUTPUTS].sum()
     return torch.tensor(((len(targets) - pos) / pos).to_numpy(), dtype=torch.float32)
+
+
+def extra_head_weights(state_dict, feature_names):
+    """Head weights on the extra inputs of a hybrid checkpoint, as a
+    features x OUTPUTS DataFrame. The extra features are standardised, so
+    weights are comparable across features within an output: sign is the
+    direction, magnitude the strength of the pull on the logit."""
+    weights = torch.cat([state_dict["flaw_head.weight"], state_dict["unrec_head.weight"]])
+    return pd.DataFrame(weights[:, EMBEDDING_DIM:].T.float().cpu().numpy(),
+                        index=feature_names, columns=OUTPUTS)
