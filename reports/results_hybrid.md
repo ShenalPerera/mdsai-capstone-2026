@@ -13,7 +13,66 @@ Partitions: train and val only. The test partition is not read during developmen
 ## Findings (does the hybrid add anything?)
 
 <!-- findings:start -->
-_Findings not yet written._
+**The classical features add a small, consistent improvement concentrated in over-exposure
+(BRT) and nothing measurable elsewhere.** A fine-tuned CNN already captures almost everything
+the ten hand-crafted features measure. Hybrid entry (seed 42) against the CNN entry (seed 42) and
+the classical entry (GB @ 224), val; gain = (AP - base rate) / (1 - base rate):
+
+| Output | Type | Classical AP | CNN AP | Hybrid AP | Paired difference, mean of 3 seeds | Seeds hybrid ahead |
+|---|---|---|---|---|---|---|
+| BLR | photometric | 0.809 | 0.885 | 0.885 | +0.002 | 2 of 3 |
+| DRK | photometric | 0.551 | 0.623 | 0.630 | -0.006 | 1 of 3 |
+| BRT | photometric | 0.472 | 0.564 | 0.588 | **+0.020** | **3 of 3** |
+| FRM | semantic | 0.698 | 0.823 | 0.830 | +0.003 | 2 of 3 |
+| OBS | semantic | 0.126 | 0.563 | 0.550 | +0.004 | 2 of 3 |
+| ROT | semantic | 0.238 | 0.696 | 0.691 | -0.001 | 2 of 3 |
+| UNREC | overall | 0.730 | 0.802 | 0.797 | -0.003 | 0 of 3 |
+| macro (6 flaws) | | 0.482 | 0.692 | 0.695 | +0.004 | 3 of 3 |
+
+Mean gain by flaw type, classical / CNN / hybrid: photometric 0.543 / 0.645 / 0.656, semantic
+0.165 / 0.594 / 0.593. The classical-to-CNN step (+0.10 photometric, +0.43 semantic) is the
+project's main effect; the CNN-to-hybrid step is +0.011 photometric and none on semantic flaws.
+
+1. **The hybrid edge is small and consistent in direction.** Macro AP over three seeds: CNN 0.689
+   (0.687-0.692), hybrid 0.693 (0.691-0.695); the hybrid is ahead in every same-seed pair (+0.003,
+   +0.005, +0.003). The ranges overlap, and with three seeds a same-sign pattern arises by chance
+   one time in four, so the macro difference is indicative. For scale, CNN over classical is +0.21.
+2. **BRT is the only output with a consistent gain:** +0.024, +0.023, +0.012 AP across seeds
+   (mean 0.573 CNN vs 0.593 hybrid), about ten times most other paired differences. UNREC is
+   behind in all three seeds, but by at most 0.005 and by 0.00003 in one seed: negligible. DRK is
+   not helped (mean -0.006) despite the luminance and dark-clipping features; the CNN already
+   reads darkness. F1 at 0.5 does not move (macro 0.548 CNN vs 0.546 hybrid; BRT 0.410 vs
+   0.407): the gain is in ranking, not at the fixed threshold.
+3. **The BRT gain comes from images where over-exposure co-occurs with other flaws.** On images
+   with BRT alone (24 positives) the hybrid equals the CNN (AP 0.462 vs 0.464). The BRT head
+   weights clipped-bright fraction positively (+0.10) together with centre edge energy (+0.19),
+   border edge energy (-0.15) and high-frequency residual (+0.11): a combination of exposure and
+   texture measurements, consistent with separating over-exposure from blur in washed-out frames
+   (P(BLR | BRT) = 64% on train). Indicative: few single-flaw positives, single seed.
+4. **Used is not the same as useful.** The share of each logit carried by the classical features
+   (standard deviation of the classical contribution / standard deviation of the full logit) is
+   largest for UNREC (0.20), BLR (0.19) and FRM (0.18), outputs that do not improve; BRT's share is
+   0.11 and OBS's 0.02. The heads draw on easy, reliable signals such as Laplacian variance (BLR
+   weight -0.24) and border edge share (FRM +0.19) in place of information the backbone would
+   otherwise encode, so results do not change. Whether a hybrid helps must be judged from paired
+   results, not from whether it weights the extra inputs.
+5. **The classical sharpness features carry their weakness into the hybrid.** BLR AP on originals
+   below 512 px (n = 361): CNN 0.872, hybrid 0.860; at 512 px and above (n = 3,514): 0.887 vs
+   0.888. Upscaled small images have low Laplacian variance whether blurred or not, the reason
+   classical BLR is weakest there (0.759), and the hybrid's BLR head leans on that feature.
+   Indicative: single seed, small subset.
+6. **ROT is unchanged and still content-based.** ROT AP 0.691 overall (shape-only 0.254) and 0.619
+   within EXIF orientation 1 (base 0.143; CNN 0.620). The classical features carry no orientation
+   information and reintroduce no shape shortcut.
+7. **Seed spread puts every single-run number in context.** CNN macro AP varies by 0.006 across
+   seeds; per flaw, OBS varies most (0.518-0.563) and BRT next (0.564-0.585), BLR least
+   (0.878-0.885). The Stage D entry (seed 42, 0.692) is the highest of the three CNN seeds; the
+   three-seed mean is 0.689.
+
+Caveats: the seed-42 CNN ran on torch 2.11 and every other run on torch 2.14 after a Colab update;
+the seed-43 and seed-44 pairs share a version and show the same direction and size of difference
+(+0.005, +0.003 vs +0.003 at seed 42), so the version change does not alter the conclusion. Best
+epochs were chosen on the val partition scored here; the test half gives the unbiased figures.
 <!-- findings:end -->
 
 ## Data
