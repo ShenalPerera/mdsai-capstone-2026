@@ -13,7 +13,76 @@ Partitions: train and val only. The test partition is not read during developmen
 ## Findings
 
 <!-- findings:start -->
-_Findings not yet written._
+**The hypothesis holds with statistical support, and the ablations locate where the CNN's
+advantage comes from.** Val AP, three arms (CNN and hybrid: seed-42 entry, mean and range over
+seeds 42-44); gain = (AP - base rate) / (1 - base rate):
+
+| Output | Type | Classical GB @ 224 | CNN | CNN 3 seeds | Hybrid | Hybrid 3 seeds |
+|---|---|---|---|---|---|---|
+| BLR | photometric | 0.809 | 0.885 | 0.882 (0.878-0.885) | 0.885 | 0.884 (0.882-0.886) |
+| DRK | photometric | 0.551 | 0.623 | 0.629 (0.623-0.634) | 0.630 | 0.622 (0.618-0.630) |
+| BRT | photometric | 0.472 | 0.564 | 0.573 (0.564-0.585) | 0.588 | 0.593 (0.583-0.608) |
+| FRM | semantic | 0.698 | 0.823 | 0.823 (0.815-0.831) | 0.830 | 0.826 (0.818-0.831) |
+| OBS | semantic | 0.126 | 0.563 | 0.534 (0.518-0.563) | 0.550 | 0.538 (0.531-0.550) |
+| ROT | semantic | 0.238 | 0.696 | 0.695 (0.689-0.701) | 0.691 | 0.695 (0.689-0.704) |
+| UNREC | overall | 0.730 | 0.802 | 0.798 (0.788-0.805) | 0.797 | 0.795 (0.788-0.801) |
+| macro (6 flaws) | | 0.482 | 0.692 | 0.689 (0.687-0.692) | 0.695 | 0.693 (0.691-0.695) |
+
+Mean gain, classical / CNN / hybrid: photometric 0.543 / 0.645 / 0.656, semantic 0.165 / 0.594 /
+0.593. Classical GB @ 512 (deployment configuration): macro AP 0.467, photometric 0.512, semantic
+0.155.
+
+1. **Classical to CNN: a large gain on every output, concentrated in the semantic flaws.** Paired
+   bootstrap intervals (1,000 val resamples) exclude 0 for all outputs: ROT +0.458 (0.422-0.493),
+   OBS +0.437 (0.353-0.506), FRM +0.125 (0.105-0.144), BRT +0.092 (0.033-0.145), BLR +0.076
+   (0.061-0.091), DRK +0.072 (0.036-0.105), UNREC +0.072 (0.053-0.092); macro +0.210
+   (0.189-0.227). The worst CNN seed (0.687) is 0.205 above the classical arm, so the gap does
+   not depend on training randomness either.
+2. **CNN to hybrid: not distinguishable overall.** Macro +0.003 (-0.004 to +0.010). BRT is the
+   only output whose interval excludes 0, +0.024 (0.002-0.046), and the only one ahead in all
+   three seeds. With eight outputs tested, a lower bound of 0.002 is marginal; it is reported as a
+   small over-exposure gain supported by both checks, not as a general hybrid advantage.
+3. **224 px beats 512 px for the classical features beyond sampling noise.** BLR +0.035
+   (0.024-0.045), macro +0.015 (0.009-0.022). The pre-registered rule (2026-10-04) anticipated
+   224 = 512 or 512 better; the outcome lies outside it, was recorded as a finding in Stage C, and
+   the rule was not amended. Classical GB @ 512 is lower than @ 224 on every output.
+4. **Pretraining supplies most of the CNN's advantage, twice as much on semantic flaws.** The same
+   network from random initialisation reaches macro AP 0.517 (pretrained 0.692; difference +0.175,
+   0.154-0.193, every output excludes 0). Mean gain falls from 0.645 to 0.484 on photometric flaws
+   (about a quarter) and from 0.594 to 0.285 on semantic flaws (about half). From scratch, the CNN
+   is below classical on the photometric flaws (BLR 0.729 vs 0.809) and still above it on the
+   semantic ones (OBS 0.251 vs 0.126, ROT 0.450 vs 0.238). The random-init run used all 15 epochs
+   with its best at epoch 13 and a train loss of 0.665 at that epoch (pretrained: epoch 3, 0.488),
+   so it was cut off while still improving: the gap is an upper bound on the contribution of
+   pretraining under this recipe.
+5. **Fine-tuning is what beats classical on the photometric flaws.** Fine-tuned over frozen: +0.100
+   macro (0.083-0.118), every output excludes 0; mean gain +0.125 photometric, +0.116 semantic.
+   The frozen backbone already reaches semantic gain 0.478 (classical 0.165) but photometric gain
+   0.520, below classical 0.543. ImageNet features carry object identity and pose but are largely
+   invariant to blur and exposure; fine-tuning adapts them. Largest gains: OBS +0.209, BRT +0.152.
+   The frozen run peaked at its fifth and last epoch (+0.007 in that epoch), so a small part of
+   the gap reflects its length; one fine-tuned epoch (0.666) already exceeds it (0.592).
+6. **Training on >=1-vote labels does not help the rare flaws and hurts the CNN.** Training
+   positives grow up to 3.9x (OBS 840 -> 3,268), but these are mostly images that four of five
+   annotators judged acceptable. Scored at >=2 votes: classical unchanged (macro -0.003,
+   -0.010 to +0.005; no output excludes 0); CNN macro -0.013 (-0.024 to -0.002), below all three
+   CNN seeds, with supported drops on FRM -0.023 (-0.032 to -0.013) and BLR -0.007, and OBS -0.040
+   (-0.082 to +0.002). At >=1 vote, 76% of training images are FRM-positive (17,713 of 23,431),
+   so the label barely separates images. The BRT difference (+0.032, -0.008 to +0.073) is not
+   supported. The flexible model absorbs the label noise; the feature-based model is insensitive
+   to it. The >=2-vote threshold is retained, and the OBS contingency (near-zero AP after class
+   weighting and >=1 labels) is not triggered: OBS AP is 0.563 at >=2.
+7. **How precisely each number is known.** Bootstrap 95% interval widths for the CNN range from
+   about 0.03 (BLR, FRM) to 0.13-0.15 (BRT, OBS); seed ranges add up to 0.045 on OBS and 0.021 on
+   BRT. Single-run differences below about 0.02 on the common flaws, or 0.05 on the rare ones,
+   are not interpretable without both checks.
+
+Caveats: all numbers are on the val partition, which also selected each CNN's best epoch, so CNN
+values are slightly optimistic; the test half, read once in a separate final run, gives the
+unbiased figures. The ablation runs and seeds 43-44 ran on torch 2.14, the seed-42 CNN and frozen
+runs on torch 2.11; the >=1-vote CNN (0.679) is also below the two torch-2.14 CNN seeds (0.687,
+0.690). Bootstrap intervals cover val sampling only; seed ranges cover training randomness only;
+ablations are single-seed.
 <!-- findings:end -->
 
 ## Comparison table (val AP)
