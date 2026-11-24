@@ -20,6 +20,7 @@ Usage:
 import argparse
 import csv
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -32,6 +33,7 @@ from src.features.classical import (  # noqa: E402
 )
 
 META_COLUMNS = ["image", "native_width", "native_height", "upsampled"]
+PROGRESS_INTERVAL_SEC = 30
 
 
 def main():
@@ -65,6 +67,7 @@ def main():
     print(f"Extracting {len(FEATURE_NAMES)} features for {len(records)} images "
           f"({', '.join(partitions)}) at long edge {args.resolutions}")
     upsampled = {res: 0 for res in args.resolutions}
+    start = last_report = time.time()
     try:
         for i, record in enumerate(records, start=1):
             name = record["image"]
@@ -81,8 +84,12 @@ def main():
                 }
                 row.update(compute_features(resize_long_edge(image, res)))
                 writers[res][0].writerow(row)
-            if i % 2000 == 0:
-                print(f"  {i}/{len(records)}")
+            now = time.time()
+            if now - last_report >= PROGRESS_INTERVAL_SEC or i == len(records):
+                rate = i / (now - start)
+                print(f"  {i}/{len(records)} ({i / len(records):.0%}) | {rate:.1f} img/s | "
+                      f"ETA {(len(records) - i) / rate / 60:.1f} min", flush=True)
+                last_report = now
     finally:
         for handle in handles:
             handle.close()

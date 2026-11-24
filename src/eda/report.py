@@ -85,14 +85,18 @@ def existing_findings(path):
     return FINDINGS_PLACEHOLDER
 
 
+DEVELOPMENT_PARTITIONS_NOTE = ("Partitions: train and val only. The test partition is not read "
+                               "during development.")
+
+
 def write_report(path, sections, title="Stage B: Exploratory Data Analysis",
-                 environment=None, findings_heading="Findings and impact on the modelling plan"):
+                 environment=None, findings_heading="Findings and impact on the modelling plan",
+                 partitions_note=DEVELOPMENT_PARTITIONS_NOTE):
     """sections: list of (heading, body) pairs, body already markdown."""
     path = Path(path)
     findings = existing_findings(path)
     parts = [f"# {title}", "",
-             "Partitions: train and val only. The test partition is not read "
-             "during development.", "",
+             partitions_note, "",
              "## Environment", "", *(environment or environment_lines()), "",
              f"## {findings_heading}", "",
              FINDINGS_START, findings, FINDINGS_END, ""]
