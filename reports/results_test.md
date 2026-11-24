@@ -13,7 +13,57 @@ Partitions: models trained on train and selected on val during development; this
 ## Findings
 
 <!-- findings:start -->
-_Findings not yet written._
+**The development conclusions hold on the held-out test partition.** Test AP (3,875 images never
+used for any decision), against val; CNN and hybrid: seed-42 entry, mean and range over seeds 42-44:
+
+| Output | Type | Classical GB @ 224 | CNN | CNN 3 seeds | Hybrid | Hybrid 3 seeds |
+|---|---|---|---|---|---|---|
+| BLR | photometric | 0.791 | 0.879 | 0.877 (0.874-0.879) | 0.882 | 0.881 (0.877-0.883) |
+| DRK | photometric | 0.587 | 0.645 | 0.633 (0.620-0.645) | 0.641 | 0.639 (0.635-0.641) |
+| BRT | photometric | 0.495 | 0.585 | 0.590 (0.585-0.600) | 0.593 | 0.602 (0.593-0.618) |
+| FRM | semantic | 0.693 | 0.822 | 0.819 (0.811-0.823) | 0.828 | 0.822 (0.815-0.828) |
+| OBS | semantic | 0.100 | 0.483 | 0.476 (0.472-0.483) | 0.489 | 0.474 (0.457-0.489) |
+| ROT | semantic | 0.223 | 0.702 | 0.699 (0.694-0.702) | 0.696 | 0.696 (0.690-0.703) |
+| UNREC | overall | 0.746 | 0.808 | 0.805 (0.798-0.808) | 0.808 | 0.803 (0.797-0.808) |
+| macro (6 flaws) | | 0.482 | 0.686 | 0.682 (0.680-0.686) | 0.688 | 0.686 (0.682-0.688) |
+
+Mean gain = (AP - base rate) / (1 - base rate), classical / CNN / hybrid: photometric 0.552 / 0.656 /
+0.659, semantic 0.141 / 0.564 / 0.569 (val: 0.543 / 0.645 / 0.656 and 0.165 / 0.594 / 0.593).
+
+1. **Selection on val inflated the CNN and hybrid only slightly.** Macro AP val to test: CNN 0.692
+   to 0.686 (-0.006), hybrid 0.695 to 0.688 (-0.007), classical GB @ 224 0.482 to 0.482 (not
+   tuned on val). The common flaws move by at most 0.006 for the CNN (BLR -0.006, FRM -0.002,
+   ROT +0.006).
+2. **Classical to CNN is confirmed on every output.** Paired bootstrap intervals (1,000 test
+   resamples) exclude 0 for all outputs: ROT +0.479 (0.442-0.512), OBS +0.382 (0.298-0.469), FRM
+   +0.128 (0.110-0.146), BRT +0.091 (0.033-0.146), BLR +0.088 (0.073-0.104), UNREC +0.061
+   (0.042-0.081), DRK +0.058 (0.021-0.096); macro +0.205 (0.184-0.223), against +0.210 on val.
+   The gain remains concentrated in the semantic flaws, the hypothesis of the project.
+3. **The hybrid is not distinguishable from the CNN.** No hybrid - CNN interval excludes 0 on test;
+   macro +0.002 (-0.004 to +0.008). The marginal BRT gain seen on val (+0.024, 0.002-0.046) does not
+   replicate as a single-seed difference (+0.007, -0.014 to +0.028); the three-seed means still
+   differ in the same direction (0.602 vs 0.590) with overlapping ranges. Adding the classical
+   features to a fine-tuned CNN gives no measurable improvement.
+4. **The ROT result is content, not shape, on unseen images.** CNN ROT AP 0.702 against 0.239 for
+   landscape shape alone; within EXIF orientation 1 (n = 3,620), where shape carries no signal,
+   0.644 against a base rate of 0.144 (classical 0.192).
+5. **OBS is the least stable output.** CNN OBS AP falls from 0.563 (val) to 0.483 (test). Seed 42
+   was the highest of the three CNN seeds on val OBS (0.518-0.563); on test the seeds span
+   0.472-0.483 and the 95% interval is 0.397-0.575 (130 positives). The CNN-classical gap on OBS
+   (0.483 vs 0.100) is unaffected. BRT, DRK and UNREC rise on test by 0.006-0.023 for the CNN:
+   rare-class variation runs in both directions.
+6. **224 vs 512 px for the classical features: 224 is better for blur only.** Test BLR AP 0.791 at
+   224 vs 0.758 at 512 (val 0.809 vs 0.774); macro AP 0.482 vs 0.481 (val 0.482 vs 0.467), as BRT
+   is higher at 512 on test (0.508 vs 0.495) and DRK level (0.585 vs 0.587). The
+   Stage C statement that 224 is better on every output does not hold on test; the blur result does.
+7. **F1 at 0.5 and the precision pattern repeat.** Macro F1: classical 0.433, CNN 0.543, hybrid
+   0.541 (val 0.430, 0.548, 0.546). The CNN keeps high recall on every output (0.72-0.84) with low
+   precision on the rare flaws (OBS 0.17, DRK 0.25, BRT 0.31), as on val.
+
+Protocol: classical GB @ 224 and @ 512 were refit on train and reproduced the saved Stage C val
+predictions to 3.3e-16 before any test input was read; CNN and hybrid used the saved best.pt
+checkpoints. Test inputs were built at this run (reports/cache_verification_test.md, 10/10
+checks). The script that produced this report refuses to run again while the report exists.
 <!-- findings:end -->
 
 ## Inputs and checks
