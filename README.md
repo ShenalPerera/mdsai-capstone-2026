@@ -31,7 +31,7 @@ set (never generated text); a flaw counts as detected at confidence 0.5; photos 
 as stored, without EXIF auto-rotation, matching training.
 
 **Run in Google Colab (nothing to install):**
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ShenalPerera/mdsai-capstone-2026/blob/main/notebooks/09_demo.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ShenalPerera/mdsai-capstone-2026/blob/main/notebooks/07_demo.ipynb)
 — Runtime > Run all, then open the printed `gradio.live` link. The notebook downloads the trained
 weights (`best.pt`, about 16 MB; weights are not committed to the repository).
 
@@ -39,7 +39,7 @@ weights (`best.pt`, about 16 MB; weights are not committed to the repository).
 
 ```bash
 pip install -r requirements.txt
-# download best.pt from the link in notebooks/09_demo.ipynb (cell 3)
+# download best.pt from the link in notebooks/07_demo.ipynb (cell 3)
 python scripts/run_demo.py --checkpoint best.pt     # opens http://127.0.0.1:7860
 ```
 
